@@ -31,7 +31,7 @@ public class MainFrame {
 
     public MainFrame() {
 
-        tx_num.setText("6");
+        tx_num.setText("7");
 
         bt_start.addMouseListener(new MouseAdapter() {
             @Override
