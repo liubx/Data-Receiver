@@ -9,6 +9,7 @@ import java.awt.event.MouseEvent;
 import java.io.*;
 import java.net.HttpURLConnection;
 import java.net.URL;
+import java.util.Date;
 import java.util.Enumeration;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -29,16 +30,19 @@ public class MainFrame {
 
     private int i;
 
-    public MainFrame() {
+    private MainFrame() {
 
-        tx_num.setText("8");
+        tx_num.setText("5");
+
+        Log.setLogger(new MyLogger());
+        Log.set(Log.LEVEL_INFO);
 
         bt_start.addMouseListener(new MouseAdapter() {
             @Override
             public void mouseClicked(MouseEvent e) {
                 super.mouseClicked(e);
 
-                if(isNumeric(tx_num.getText())){
+                if (isNumeric(tx_num.getText())) {
                     write("Start");
                     if (connect()) {
                         bt_start.setEnabled(false);
@@ -46,10 +50,9 @@ public class MainFrame {
                     } else {
                         write("Retry");
                     }
-                }else{
+                } else {
                     write("Please enter a number");
                 }
-
             }
         });
         bt_stop.addMouseListener(new MouseAdapter() {
@@ -79,13 +82,12 @@ public class MainFrame {
     private boolean connect() {
 
         i = 0;
-
         if (selectedPortIdentifier == null) {
             write("Searching for port");
-            Enumeration<CommPortIdentifier> ports = CommPortIdentifier.getPortIdentifiers();
+            Enumeration ports = CommPortIdentifier.getPortIdentifiers();
 
             if (ports.hasMoreElements()) {
-                CommPortIdentifier curPort = ports.nextElement();
+                CommPortIdentifier curPort = (CommPortIdentifier) ports.nextElement();
 
                 //get only serial ports
                 if (curPort.getPortType() == CommPortIdentifier.PORT_SERIAL) {
@@ -148,7 +150,8 @@ public class MainFrame {
                         buffer[len++] = (byte) data;
                     }
 
-                    send(new String(buffer, 0, len).replace(" ", ""));
+                    write(new String(buffer, 0, len).replace(" ", ""));
+                    send(new String(buffer, 0, len).replace(" ", ""), false);
 
                     if (i < Integer.parseInt(tx_num.getText())) {
                         i++;
@@ -199,12 +202,23 @@ public class MainFrame {
     private void write(String s) {
         tx_main.append(s + "\n");
         tx_main.setCaretPosition(tx_main.getText().length());
+        Log.info(s);
     }
 
 
-    private void send(final String s) {
+    private void send(String string, boolean checkCRC) {
 
-        write(s);
+        String checkString;
+        if (checkCRC) {
+            if (checkCRC(string)) {
+                checkString = string.substring(0, string.length() - 4);
+            } else {
+                return;
+            }
+        } else {
+            checkString = string;
+        }
+        final String s = checkString;
 
         new Thread(new Runnable() {
             @Override
@@ -212,11 +226,7 @@ public class MainFrame {
 
                 try {
 
-                    JSONObject jsonObject = new JSONObject();
-                    jsonObject.element("serial", s.substring(1, 2));
-                    jsonObject.element("value", s.substring(2));
-
-                    HttpURLConnection connection = (HttpURLConnection) new URL("http://104.131.66.240/erp/scripts/send_electricity.php").openConnection();
+                    HttpURLConnection connection = (HttpURLConnection) new URL("http://104.131.66.240/erp/scripts/communication.php").openConnection();
                     connection.setDoOutput(true);
                     connection.setDoInput(true);
                     connection.setRequestMethod("POST");
@@ -227,7 +237,7 @@ public class MainFrame {
 
                     DataOutputStream out = new DataOutputStream(connection.getOutputStream());
 
-                    out.writeBytes(jsonObject.toString());
+                    out.writeBytes("type=0&value=" + s);
                     out.flush();
                     out.close();
 
@@ -242,9 +252,11 @@ public class MainFrame {
                     reader.close();
                     connection.disconnect();
 
-                    jsonObject = JSONObject.fromObject(sb.toString());
+                    JSONObject jsonObject = JSONObject.fromObject(sb.toString());
                     if (jsonObject.getString("status").equals("succeed")) {
-                        write(s.substring(2) + " is accepted");
+                        write(s + " is accepted");
+                    } else {
+                        write(jsonObject.toString());
                     }
 
                 } catch (IOException e) {
@@ -257,9 +269,40 @@ public class MainFrame {
     }
 
 
-    public boolean isNumeric(String str){
+    private boolean isNumeric(String str) {
         Pattern pattern = Pattern.compile("[0-9]*");
         Matcher isNum = pattern.matcher(str);
         return isNum.matches();
+    }
+
+    private boolean checkCRC(String s) {
+        byte[] b = s.substring(0, s.length() - 4).getBytes();
+        Crc16 crc = new Crc16();
+        for (byte a : b) {
+            crc.update(a);
+        }
+        System.out.println(Integer.toHexString((int) crc.getValue()).toUpperCase());
+        return Integer.toHexString((int) crc.getValue()).toUpperCase().equals(s.substring(s.length() - 4).toUpperCase());
+    }
+
+
+    static public class MyLogger extends Log.Logger {
+        public void log(int level, String category, String message, Throwable ex) {
+            StringBuilder builder = new StringBuilder(256);
+            builder.append(new Date());
+            builder.append(' ');
+            builder.append(level);
+            builder.append('[');
+            builder.append(category);
+            builder.append("] ");
+            builder.append(message);
+            if (ex != null) {
+                StringWriter writer = new StringWriter(256);
+                ex.printStackTrace(new PrintWriter(writer));
+                builder.append('\n');
+                builder.append(writer.toString().trim());
+            }
+            System.out.println(builder);
+        }
     }
 }
